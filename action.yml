@@ -1,6 +1,6 @@
 name: 'Claude Self-Learning Review'
 description: 'Analyzes recent commits to identify patterns and improve project rules automatically'
-author: 'Your Name'
+author: 'Valmarelox'
 
 branding:
   icon: 'book-open'
@@ -9,7 +9,7 @@ branding:
 inputs:
   claude_code_oauth_token:
     description: 'Claude Code OAuth token for authentication'
-    required: true
+    required: false
 
   anthropic_api_key:
     description: 'Anthropic API key (alternative to OAuth token)'
@@ -21,7 +21,11 @@ inputs:
     default: '7'
 
   prompt:
-    description: 'Custom prompt for Claude (overrides default analysis)'
+    description: 'Custom prompt for Claude (completely overrides default analysis)'
+    required: false
+
+  additional_prompt:
+    description: 'Extra context appended to the default prompt (ignored if prompt is set)'
     required: false
 
   rules_path:
@@ -50,7 +54,7 @@ inputs:
     default: ''
 
   analyze_prs:
-    description: 'Analyze merged PR comments for feedback patterns'
+    description: 'Analyze merged PR review comments for feedback patterns (requires GITHUB_TOKEN)'
     required: false
     default: 'true'
 
@@ -66,6 +70,43 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Build prompt from template
+      id: build-prompt
+      shell: bash
+      env:
+        DAYS_TO_ANALYZE: ${{ inputs.days_to_analyze }}
+        RULES_FILE: ${{ inputs.rules_file }}
+        RULES_PATH: ${{ inputs.rules_path }}
+        MAX_RULE_LINES: ${{ inputs.max_rule_lines }}
+        ANALYZE_PRS: ${{ inputs.analyze_prs }}
+        ADDITIONAL_PROMPT: ${{ inputs.additional_prompt }}
+      run: |
+        PROMPT=$(sed \
+          -e "s|__DAYS_TO_ANALYZE__|${DAYS_TO_ANALYZE}|g" \
+          -e "s|__RULES_FILE__|${RULES_FILE}|g" \
+          -e "s|__RULES_PATH__|${RULES_PATH}|g" \
+          -e "s|__MAX_RULE_LINES__|${MAX_RULE_LINES}|g" \
+          "${GITHUB_ACTION_PATH}/prompt.md")
+
+        # Remove PR analysis section if disabled
+        if [ "${ANALYZE_PRS}" = "false" ]; then
+          PROMPT=$(echo "$PROMPT" | awk '/<!-- BEGIN:PR_ANALYSIS -->/{skip=1;next}/<!-- END:PR_ANALYSIS -->/{skip=0;next}!skip')
+        fi
+
+        # Append additional context if provided
+        if [ -n "${ADDITIONAL_PROMPT}" ]; then
+          PROMPT="${PROMPT}
+
+        ## Additional Context
+        ${ADDITIONAL_PROMPT}"
+        fi
+
+        {
+          echo "prompt<<PROMPT_DELIMITER_EOF"
+          echo "$PROMPT"
+          echo "PROMPT_DELIMITER_EOF"
+        } >> "$GITHUB_OUTPUT"
+
     - name: Run Claude Self-Learning Review
       id: claude-review
       uses: anthropics/claude-code-action@v1
@@ -74,79 +115,4 @@ runs:
         anthropic_api_key: ${{ inputs.anthropic_api_key }}
         allowed_tools: ${{ inputs.allowed_tools }}
         model: ${{ inputs.model }}
-
-        prompt: |
-          ${{ inputs.prompt || format('You are analyzing this repository to identify patterns where Claude made mistakes,
-          so you can propose rule improvements to prevent future issues.
-
-          ## PHASE 1: Data Gathering
-
-          ### Git History Analysis
-          Run: `git log --oneline --stat --since="{0} days ago"`
-
-          Look for commits that suggest corrections:
-          - Message patterns: "fix", "revert", "correct", "cleanup", "remove unnecessary", "actually", "oops", "typo"
-          - Files modified multiple times in short succession
-          - Small commits following large Claude-generated commits
-
-          For each suspicious commit, run `git show <hash>` to see the actual diff.
-          Focus on WHAT was wrong in the code, not just the commit message.
-
-          ### PR Review Comments (if available)
-          Run: `gh pr list --state merged --limit 20 --json number,title,mergedAt`
-
-          For recent merged PRs, fetch review comments:
-          `gh pr view <number> --comments --json comments,reviews`
-
-          Look for:
-          - Review feedback explaining why code was wrong
-          - Requested changes patterns
-          - Common reviewer complaints
-
-          If `gh` fails or no PRs exist, continue with git-only analysis.
-
-          ## PHASE 2: Pattern Recognition
-
-          Categorize issues found. Start with these categories, but add new ones if you discover patterns that do not fit:
-
-          - **style**: Code formatting, naming conventions, idioms
-          - **architecture**: Wrong patterns, poor structure, coupling issues
-          - **overengineering**: Unnecessary abstractions, premature optimization
-          - **underengineering**: Missing error handling, edge cases, validation
-          - **security**: Vulnerabilities, unsafe practices
-          - **testing**: Missing tests, poor test quality
-          - **dependencies**: Wrong imports, version issues
-
-          For each pattern, note:
-          - Frequency (how many times it occurred)
-          - Severity (how much effort to fix)
-          - Concrete example from the diffs
-
-          ## PHASE 3: Rule Proposal
-
-          Read existing rules in {1} and {2}/.
-
-          For each significant pattern (occurred 2+ times OR high severity):
-          1. Check if an existing rule already covers it
-          2. If not, draft a new rule with:
-             - Clear, actionable directive
-             - Brief code example (3-5 lines max showing wrong vs right)
-             - Category tag
-
-          ## PHASE 4: Output
-
-          If patterns found worth documenting:
-          - Create/update rule files
-          - Create a PR with:
-            - Title: "chore: update Claude rules based on recent patterns"
-            - Body listing patterns found and rules added
-
-          If no significant patterns (all one-offs or already covered):
-          - Exit cleanly without creating anything
-          - Optionally log what was analyzed
-
-          ## CONSTRAINTS
-          - Rule files must stay under {3} lines
-          - Prioritize recurring patterns over one-offs
-          - Be specific - vague rules do not help
-          - Do not duplicate existing rules', inputs.days_to_analyze, inputs.rules_file, inputs.rules_path, inputs.max_rule_lines) }}
+        prompt: ${{ inputs.prompt || steps.build-prompt.outputs.prompt }}
