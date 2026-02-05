@@ -107,12 +107,24 @@ runs:
           echo "PROMPT_DELIMITER_EOF"
         } >> "$GITHUB_OUTPUT"
 
+    - name: Build claude args
+      id: build-args
+      shell: bash
+      env:
+        ALLOWED_TOOLS: ${{ inputs.allowed_tools }}
+        MODEL: ${{ inputs.model }}
+      run: |
+        ARGS="--allowed-tools ${ALLOWED_TOOLS}"
+        if [ -n "${MODEL}" ]; then
+          ARGS="${ARGS} --model ${MODEL}"
+        fi
+        echo "claude_args=${ARGS}" >> "$GITHUB_OUTPUT"
+
     - name: Run Claude Self-Learning Review
       id: claude-review
       uses: anthropics/claude-code-action@v1
       with:
         claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
         anthropic_api_key: ${{ inputs.anthropic_api_key }}
-        allowed_tools: ${{ inputs.allowed_tools }}
-        model: ${{ inputs.model }}
+        claude_args: ${{ steps.build-args.outputs.claude_args }}
         prompt: ${{ inputs.prompt || steps.build-prompt.outputs.prompt }}
