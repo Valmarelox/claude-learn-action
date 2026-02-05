@@ -8,11 +8,6 @@ on:
     - cron: '0 9 * * 1'  # Every Monday at 9:00 AM UTC
 
   workflow_dispatch:
-    inputs:
-      prompt:
-        description: 'Custom prompt for Claude (optional)'
-        required: false
-        type: string
 
 jobs:
   self-learning-review:
@@ -26,21 +21,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for pattern analysis
+          fetch-depth: 0
 
       - name: Run Claude Self-Learning Review
         id: claude-review
-        uses: your-username/claude-learn-action@v1
+        uses: Valmarelox/claude-learn-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: ${{ github.event.inputs.prompt }}
-
-      - name: Upload analysis results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: claude-analysis-${{ github.run_number }}
-          path: |
-            .claude/
-            *.log
-          retention-days: 30
